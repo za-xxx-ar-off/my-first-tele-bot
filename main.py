@@ -65,5 +65,24 @@ def main():
     logging.info("🤖 Бот запущен. Ожидает команды /photos ...")
     app.run_polling()
 
+from flask import Flask
+import threading
+import os
+
+# Создаем фейковый веб-сервер
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    # Запускаем Flask в отдельном потоке
+    threading.Thread(target=run_web).start()
+    main()
 if __name__ == '__main__':
     main()
