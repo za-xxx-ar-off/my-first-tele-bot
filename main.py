@@ -1,6 +1,8 @@
 import logging
 import os
 import requests
+import threading
+from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -41,48 +43,36 @@ async def send_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for name, photo_url in photos:
         try:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=photo_url,
-                caption=name
-            )
+            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo_url, caption=name)
         except Exception as e:
             logging.error(f"Ошибка при отправке {name}: {e}")
             await update.message.reply_text(f"Не удалось отправить фото: {name}")
 
     await update.message.reply_text("Готово ✅")
 
-# === ГЛАВНАЯ ФУНКЦИЯ ===
-def main():
-    if not TELEGRAM_BOT_TOKEN:
-        raise ValueError("❌ BOT_TOKEN не найден. Задай переменные окружения в Render.")
-    if not AIRTABLE_TOKEN or not BASE_ID:
-        raise ValueError("❌ AIRTABLE_TOKEN и BASE_ID должны быть заданы в переменных окружения.")
-
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("photos", send_photos))
-
-    logging.info("🤖 Бот запущен. Ожидает команды /photos ...")
-    app.run_polling()
-
-from flask import Flask
-import threading
-import os
-
-# Создаем фейковый веб-сервер
+# === Flask веб-сервер для Render ===
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Bot is running!"
+    return "✅ Bot is running on Render!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host="0.0.0.0", port=port)
 
+# === Главный запуск ===
+def main():
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("❌ BOT_TOKEN не найден. Установи переменные окружения в Render.")
+    if not AIRTABLE_TOKEN or not BASE_ID:
+        raise ValueError("❌ AIRTABLE_TOKEN и BASE_ID должны быть заданы в переменных окружения.")
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("photos", send_photos))
+    logging.info("🤖 Бот запущен. Ожидает команды /photos ...")
+    app.run_polling()
+
 if __name__ == '__main__':
-    # Запускаем Flask в отдельном потоке
     threading.Thread(target=run_web).start()
-    main()
-if __name__ == '__main__':
     main()
