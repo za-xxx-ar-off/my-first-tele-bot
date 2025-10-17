@@ -70,8 +70,7 @@ def webhook():
 def home():
     return "✅ Telegram Bot is running on Render via Webhook!"
 
-# === Установка webhook при старте ===
-@app.before_first_request
+# === Установка webhook при запуске ===
 def set_webhook():
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
     telegram_app.bot.set_webhook(url=webhook_url)
@@ -79,5 +78,6 @@ def set_webhook():
 
 # === Точка входа ===
 if __name__ == "__main__":
+    set_webhook()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
