@@ -1,89 +1,87 @@
-import logging
 import os
+import logging
 import requests
-import asyncio
 from flask import Flask, request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# === Настройки ===
+# --- Настройки ---
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+AIRTABLE_TABLE_NAME = "photos"  # или "фотографии", если так называется таблица
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
-BASE_ID = os.getenv("BASE_ID")
-TABLE_NAME = os.getenv("TABLE_NAME", "Photos")
 
-# === Логирование ===
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# === Flask ===
 app = Flask(__name__)
-
-# === Telegram bot ===
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-# === Получаем фото из Airtable ===
-def fetch_airtable_photos():
-    try:
-        url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
-        headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        photos = []
-        for record in data.get("records", []):
-            f = record.get("fields", {})
-            if "Name" in f and "Photo URL" in f:
-                photos.append((f["Name"], f["Photo URL"]))
-        return photos
-    except Exception as e:
-        logger.error(f"Airtable fetch error: {e}")
-        return []
+logging.basicConfig(level=logging.INFO)
 
-# === Команда /photos ===
+
+# --- Получение фото из Airtable ---
+def get_photos_from_airtable():
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    response = requests.get(url, headers=headers)
+    data = response.json()
+
+    photos = []
+
+    for record in data.get("records", []):
+        fields = record.get("fields", {})
+        name = fields.get("Name") or fields.get("Название")  # поддержка русского варианта
+
+        # Берём фото из поля Attachments
+        attachments = (
+            fields.get("Photo") or
+            fields.get("Photos") or
+            fields.get("Фото") or
+            fields.get("Attachments")
+        )
+
+        if attachments and isinstance(attachments, list):
+            photo_url = attachments[0].get("url")
+            if name and photo_url:
+                photos.append((name, photo_url))
+
+    return photos
+
+
+# --- Обработка команд ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Напиши 'фото', чтобы увидеть мебель 😊")
+
+
 async def send_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Received /photos command")
-    photos = fetch_airtable_photos()
+    photos = get_photos_from_airtable()
+
     if not photos:
-        await update.message.reply_text("Фотографии не найдены.")
+        await update.message.reply_text("❌ Фотографии не найдены в Airtable.")
         return
-    for name, url in photos:
+
+    for name, photo_url in photos:
         try:
-            await update.message.reply_photo(photo=url, caption=name)
+            await update.message.reply_photo(photo=photo_url, caption=name)
         except Exception as e:
-            logger.error(f"Error sending photo {name}: {e}")
-    await update.message.reply_text("Готово ✅")
+            logging.error(f"Ошибка при отправке фото {name}: {e}")
 
-telegram_app.add_handler(CommandHandler("photos", send_photos))
 
-# === Flask маршруты ===
-@app.route("/")
-def home():
-    return "✅ Bot is running!"
+# --- Настройка хендлеров ---
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_photos))
 
+
+# --- Webhook Flask ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json(force=True)
-        logger.info(f"Incoming update: {data}")
-        update = Update.de_json(data, telegram_app.bot)
-        asyncio.run(process_update_async(update))
-    except Exception as e:
-        logger.error(f"Webhook processing error: {e}", exc_info=True)
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    telegram_app.update_queue.put_nowait(update)
     return "ok"
 
-# === Асинхронная обработка апдейта ===
-async def process_update_async(update: Update):
-    await telegram_app.initialize()
-    await telegram_app.process_update(update)
-    await telegram_app.shutdown()
-
-# === Устанавливаем Webhook ===
-def set_webhook():
-    url = f"https://my-first-tele-bot.onrender.com/{BOT_TOKEN}"
-    set_hook = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={url}")
-    logger.info(f"Webhook set: {set_hook.text}")
 
 if __name__ == "__main__":
-    set_webhook()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    telegram_app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+    )
